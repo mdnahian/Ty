@@ -2,6 +2,8 @@ from flask import Flask, request
 from flask_pymongo import PyMongo
 from api import APICall
 import json
+import sentiment
+import phrases
 
 
 app = Flask(__name__)
@@ -15,7 +17,7 @@ PAGE_ID = '2016014895300094'
 fb = APICall(PAGE_TOKEN)
 
 
-BASE_URL = 'https://084137d5.ngrok.io'
+BASE_URL = 'https://9da4bf51.ngrok.io'
 
 
 def send_button_to_user(user_id):
@@ -33,12 +35,12 @@ def send_button_to_user(user_id):
                     "buttons": [
                         {
                             "type": "web_url",
-                            "url": BASE_URL+"/connect",
+                            "url": BASE_URL+"/type/connect/"+user_id,
                             "title": "Connect With Someone"
                         },
                         {
                             "type": "web_url",
-                            "url": BASE_URL+"/help",
+                            "url": BASE_URL+"/type/help/"+user_id,
                             "title": "Help Someone"
                         }
                     ]
@@ -73,51 +75,106 @@ def get_text_message_parts(messaging):
     return message
 
 
-def get_user_name(sender):
-    link = 'https://graph.facebook.com/v2.8/' + sender
-    response = fb.makeRequest(link)
-    return json.loads(response)['first_name']
-
-
 def send_welcome_message(sender):
     send_to_recipient("Hello, I'm Ty. I can connect you with someone who can help you.", sender)
     send_button_to_user(sender)
 
 
-@app.route('/connect', method=['POST'])
-def connect():
-    if request.method == 'POST':
-        response = request.get_json()
-        print response
+@app.route('/type/<t>/<uid>', methods=['GET'])
+def type(t, uid):
+    user = mongo.db.ty.users.find_one({'uid': uid})
+
+    if user is not None:
+        if t == 'connect':
+            mongo.db.ty.users.update_one({'uid': uid}, {'$set': {'type': t}})
+            send_to_recipient('What do you need help with?', uid)
+        elif t == 'help':
+            mongo.db.ty.users.update_one({'uid': uid}, {'$set': {'type': t}})
+            send_to_recipient('What can you help with?', uid)
+
+    return '<script>window.close();</script>'
+
+
+
+
+def get_recipient(user_id, topics):
+    users = mongo.db.ty.users.find()
+    for user in users:
+        if user['uid'] != user_id:
+            for i in range(0, len(user['topics'])):
+                for topic in topics:
+                    if topic == user['topics'][i]:
+                        if 'recipient' not in user or user['recipient'] == '':
+                            return user['uid']
+    return None
+
+
+
 
 
 @app.route('/', methods=['GET', 'POST'])
 def webhook():
-    # return request.args.get('hub.challenge', '')
+    #return request.args.get('hub.challenge', '')
     if request.method == 'POST':
         response = request.get_json()
 
         if response['object'] == 'page':
             sender, messaging = get_sender(response)
 
-            user = mongo.db.users.find({'uid': sender})
+            user = mongo.db.ty.users.find_one({'uid': sender})
 
-            if user is None:
-                name = get_user_name()
-                mongo.db.users.insert({
-                    'name': name,
-                    'uid': sender
-                })
-                send_welcome_message(sender)
-                return '200'
+            if sender != PAGE_ID:
 
+                if user is None:
+                    mongo.db.ty.users.insert_one({
+                        'uid': sender
+                    })
+                    send_welcome_message(sender)
+                    return '200'
+                else:
+                    if 'recipient' not in user:
+                        if 'type' not in user:
+                            return '200'
+                        else:
+                            message = get_text_message_parts(messaging)
+                            print message
+                            topics = phrases.get_key_phrases(message)
+                            print topics
 
+                            mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'topics': topics}})
 
-            message = get_text_message_parts(messaging)
+                            recipient = get_recipient(sender, topics)
 
+                            if recipient is not None:
+                                mongo.db.ty.users.update_one({'uid': uid}, {'$set': {'recipient': recipient}})
+                                send_to_recipient("You've been connected. Say Hi!")
+                            else:
+                                if user['type'] == 'connect':
+                                    send_to_recipient('Finding someone who can help you...', sender)
+                                elif user['type'] == 'help':
+                                    send_to_recipient('Finding someone you can help...', sender)
+                            return '200'
 
+                    else:
+                        message = get_text_message_parts(messaging)
+                        if message == 'stop':
+                            mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'recipient': ''}})
+                            mongo.db.ty.users.update_one({'uid': user['recipient']}, {'$set': {'recipient': ''}})
+                        elif message == 'restart':
+                            mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'type': '', 'topics': '', 'recipient': ''}})
+                            send_welcome_message(sender)
+                        else:
+                            if sentiment.is_positive(message):
+                                send_to_recipient(message, user['recipient'])
+                                return '200'
+                            else:
+                                send_to_recipient('Explicit content detected. Message blocked.', sender)
+                                return ' 200'
 
-        return '200'
+                            
+
+            return '200'
+
 
 
 
