@@ -23,10 +23,22 @@ PAGE_ID = '2016014895300094'
 fb = APICall(PAGE_TOKEN)
 
 
-BASE_URL = 'https://9da4bf51.ngrok.io'
+BASE_URL = 'https://pygoat.com'
 
 
 # nouns = {x.name().split('.', 1)[0] for x in wn.all_synsets('n')}
+
+
+
+
+def get_synonyms(word):
+        synonyms = []
+        for synset in wn.synsets(word):
+                for lemma in synset.lemmas():
+                        synonyms.append(lemma.name())
+        return synonyms
+
+
 
 
 def send_button_to_user(user_id):
@@ -86,6 +98,14 @@ def get_image_message_parts(messaging):
             return image['payload']['url']
     except:
         return None
+
+
+@app.route('/delete')
+def delete():
+    users = mongo.db.ty.users.find({})
+    for user in users:
+        mongo.db.ty.users.delete_one({'uid': user['uid']})
+    return '200'
 
 
 def get_text_message_parts(messaging):
@@ -150,16 +170,21 @@ def is_message_safe(message):
 
 
 def get_topics(message):
-    # topics = []
+    topics = []
     # keywords = phrases.get_key_phrases(message)
     # for keyword in keywords:
     #     topics.append(keyword)
 
 
     word_list = message.split()
-    filtered_words = [word for word in word_list if word not in stopwords.words('english')]
+    for word in word_list:
+        if len(word) < 4:
+            synonyms = get_synonyms(word)
+            topics.extend(synonyms)
+    # return word_list
+    #filtered_words = [word for word in word_list if word not in stopwords.words('english')]
 
-    return filtered_words
+    #return filtered_words
 
     # for word in filtered_words:
     #     try:
@@ -171,7 +196,7 @@ def get_topics(message):
     #     except:
     #         print 'failed' 
 
-    # return set(topics)
+    return topics
     # return keywords
 
 
@@ -269,7 +294,7 @@ def webhook():
                                 return '200'
                             
             return '200'
-
+    return '200'
 
 
 
