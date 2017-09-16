@@ -18,5 +18,6 @@ def get_key_phrases (text):
     body = json.dumps (documents)
     conn.request ("POST", path, body, headers)
     response = conn.getresponse ()
+    print response.read()
     keyPhrases = json.loads(response.read())['documents'][0]['keyPhrases']
     return keyPhrases

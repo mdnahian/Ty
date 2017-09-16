@@ -1,9 +1,15 @@
 from flask import Flask, request
 from flask_pymongo import PyMongo
 from api import APICall
+from nltk.corpus import stopwords
+from nltk.corpus import wordnet as wn
 import json
 import sentiment
 import phrases
+import validators
+import website
+import nsfw
+import curse
 
 
 app = Flask(__name__)
@@ -18,6 +24,9 @@ fb = APICall(PAGE_TOKEN)
 
 
 BASE_URL = 'https://9da4bf51.ngrok.io'
+
+
+# nouns = {x.name().split('.', 1)[0] for x in wn.all_synsets('n')}
 
 
 def send_button_to_user(user_id):
@@ -70,9 +79,21 @@ def get_sender(response):
     return messaging[len(messaging) - 1]['sender']['id'], messaging
 
 
+def get_image_message_parts(messaging):
+    try:
+        image = messaging[len(messaging) - 1]['message']['attachments'][0]
+        if image['type'] == 'image':
+            return image['payload']['url']
+    except:
+        return None
+
+
 def get_text_message_parts(messaging):
-    message = messaging[len(messaging) - 1]['message']['text']
-    return message
+    try:
+        message = messaging[len(messaging) - 1]['message']['text']
+        return message
+    except:
+        return None
 
 
 def send_welcome_message(sender):
@@ -103,13 +124,55 @@ def get_recipient(user_id, topics):
         if user['uid'] != user_id:
             for i in range(0, len(user['topics'])):
                 for topic in topics:
-                    if topic == user['topics'][i]:
+                    if topic in user['topics'][i] or user['topics'][i] in topic:
                         if 'recipient' not in user or user['recipient'] == '':
                             return user['uid']
     return None
 
 
 
+def is_url(message):
+    parts = message.split()
+    for part in parts:
+        if validators.url(part):
+            return True, part
+    return False
+
+
+def is_message_safe(message):
+    if sentiment.is_positive(message):
+        return True
+    else:
+        if curse.is_cursing(message):
+            return False
+        else:
+            return True
+
+
+def get_topics(message):
+    # topics = []
+    # keywords = phrases.get_key_phrases(message)
+    # for keyword in keywords:
+    #     topics.append(keyword)
+
+
+    word_list = message.split()
+    filtered_words = [word for word in word_list if word not in stopwords.words('english')]
+
+    return filtered_words
+
+    # for word in filtered_words:
+    #     try:
+    #         if word in nouns:
+    #             # ws = wn.synsets(word)
+    #             # for i in range(0, len(ws)):
+    #             #     if i != 0:
+    #             topics.append(word)
+    #     except:
+    #         print 'failed' 
+
+    # return set(topics)
+    # return keywords
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -119,6 +182,8 @@ def webhook():
         response = request.get_json()
 
         if response['object'] == 'page':
+
+
             sender, messaging = get_sender(response)
 
             user = mongo.db.ty.users.find_one({'uid': sender})
@@ -137,17 +202,18 @@ def webhook():
                             return '200'
                         else:
                             message = get_text_message_parts(messaging)
-                            print message
-                            topics = phrases.get_key_phrases(message)
-                            print topics
+                            topics = get_topics(message)
+                            
 
                             mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'topics': topics}})
 
                             recipient = get_recipient(sender, topics)
 
                             if recipient is not None:
-                                mongo.db.ty.users.update_one({'uid': uid}, {'$set': {'recipient': recipient}})
-                                send_to_recipient("You've been connected. Say Hi!")
+                                mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'recipient': recipient}})
+                                mongo.db.ty.users.update_one({'uid': recipient}, {'$set': {'recipient': sender}})
+                                send_to_recipient("You've been connected. Say Hi!", sender)
+                                send_to_recipient("You've been connected. Say Hi!", recipient)
                             else:
                                 if user['type'] == 'connect':
                                     send_to_recipient('Finding someone who can help you...', sender)
@@ -156,23 +222,52 @@ def webhook():
                             return '200'
 
                     else:
+
                         message = get_text_message_parts(messaging)
-                        if message == 'stop':
-                            mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'recipient': ''}})
-                            mongo.db.ty.users.update_one({'uid': user['recipient']}, {'$set': {'recipient': ''}})
-                        elif message == 'restart':
-                            mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'type': '', 'topics': '', 'recipient': ''}})
-                            send_welcome_message(sender)
-                        else:
-                            if sentiment.is_positive(message):
-                                send_to_recipient(message, user['recipient'])
+                        
+
+
+                        if message != None:
+                        
+                            if message == 'stop':
+                                mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'recipient': ''}})
+                                send_to_recipient('You disconnected from the conversation.', sender)
+                                mongo.db.ty.users.update_one({'uid': user['recipient']}, {'$set': {'recipient': ''}})
+                                send_to_recipient('You have been disconnected from the conversation.', user['recipient'])
+                            elif message == 'restart':
+                                mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'type': '', 'topics': '', 'recipient': ''}})
+                                
+                                if 'recipient' in user:
+                                    send_to_recipient('You disconnected from the conversation.', sender)
+                                    mongo.db.ty.users.update_one({'uid': user['recipient']}, {'$set': {'recipient': ''}})
+                                    send_to_recipient('You have been disconnected from the conversation.', user['recipient'])
+                                else:
+                                    send_to_recipient('Your profile has been reset.', sender)
+                                send_welcome_message(sender)
+                            elif is_url(message) != False:
+                                x, url = is_url(message)
+                                if website.is_nsfw(url):
+                                    send_to_recipient('Explicit content detected. Message blocked.', sender)
+                                else:
+                                    send_to_recipient(message, user['recipient'])
                                 return '200'
                             else:
-                                send_to_recipient('Explicit content detected. Message blocked.', sender)
+                                if is_message_safe(message):
+                                    send_to_recipient(message, user['recipient'])
+                                else:
+                                    send_to_recipient('Explicit content detected. Message blocked.', sender)
                                 return ' 200'
 
-                            
+                        else:
+                            url = get_image_message_parts(messaging)
 
+                            if url != None:
+                                if nsfw.is_safe(url):
+                                    send_to_recipient(url, user['recipient'])
+                                else:
+                                    send_to_recipient('Explicit content detected. Message blocked.', sender)
+                                return '200'
+                            
             return '200'
 
 
