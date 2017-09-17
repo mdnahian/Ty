@@ -21,7 +21,7 @@ def is_positive(text):
     response = conn.getresponse ()
     score = json.loads(response.read())['documents'][0]['score']
 
-    if score > 0.5:
+    if score > 0.7:
         return True
     else:
         return False

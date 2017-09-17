@@ -23,7 +23,7 @@ PAGE_ID = '2016014895300094'
 fb = APICall(PAGE_TOKEN)
 
 
-BASE_URL = 'https://pygoat.com'
+BASE_URL = 'https://ab28966b.ngrok.io'
 
 
 # nouns = {x.name().split('.', 1)[0] for x in wn.all_synsets('n')}
@@ -57,12 +57,12 @@ def send_button_to_user(user_id):
                         {
                             "type": "web_url",
                             "url": BASE_URL+"/type/connect/"+user_id,
-                            "title": "Connect With Someone"
+                            "title": "Learn"
                         },
                         {
                             "type": "web_url",
                             "url": BASE_URL+"/type/help/"+user_id,
-                            "title": "Help Someone"
+                            "title": "Teach"
                         }
                     ]
                 }
@@ -117,7 +117,7 @@ def get_text_message_parts(messaging):
 
 
 def send_welcome_message(sender):
-    send_to_recipient("Hello, I'm Ty. I can connect you with someone who can help you.", sender)
+    send_to_recipient("Hi, I'm Ty. I can connect you to people who have similar interests to promote a healthy environment for discussion.", sender)
     send_button_to_user(sender)
 
 
@@ -128,10 +128,10 @@ def type(t, uid):
     if user is not None:
         if t == 'connect':
             mongo.db.ty.users.update_one({'uid': uid}, {'$set': {'type': t}})
-            send_to_recipient('What do you need help with?', uid)
+            send_to_recipient('What would you like to learn about?', uid)
         elif t == 'help':
             mongo.db.ty.users.update_one({'uid': uid}, {'$set': {'type': t}})
-            send_to_recipient('What can you help with?', uid)
+            send_to_recipient('What do you know about?', uid)
 
     return '<script>window.close();</script>'
 
@@ -142,11 +142,13 @@ def get_recipient(user_id, topics):
     users = mongo.db.ty.users.find()
     for user in users:
         if user['uid'] != user_id:
-            for i in range(0, len(user['topics'])):
-                for topic in topics:
-                    if topic in user['topics'][i] or user['topics'][i] in topic:
-                        if 'recipient' not in user or user['recipient'] == '':
-                            return user['uid']
+            if 'topics' in user:
+                for i in range(0, len(user['topics'])):
+                    print i
+                    for topic in topics:
+                        if topic.lower().replace('_', ' ') in user['topics'][i].lower().replace('_', ' ') or user['topics'][i].lower().replace('_', ' ') in topic.lower().replace('_', ' '):
+                            if 'recipient' not in user or user['recipient'] == '':
+                                return user['uid']
     return None
 
 
@@ -177,10 +179,13 @@ def get_topics(message):
 
 
     word_list = message.split()
+    print word_list
     for word in word_list:
-        if len(word) < 4:
+        if len(word) > 4:
             synonyms = get_synonyms(word)
-            topics.extend(synonyms)
+            for synonym in synonyms:
+                if len(synonym) >= 4:
+                    topics.append(synonym)
     # return word_list
     #filtered_words = [word for word in word_list if word not in stopwords.words('english')]
 
@@ -213,6 +218,8 @@ def webhook():
 
             user = mongo.db.ty.users.find_one({'uid': sender})
 
+            print user
+
             if sender != PAGE_ID:
 
                 if user is None:
@@ -223,43 +230,51 @@ def webhook():
                     return '200'
                 else:
                     if 'recipient' not in user:
-                        if 'type' not in user:
+                        if 'type' not in user or len(user['type'])==0:
                             return '200'
                         else:
                             message = get_text_message_parts(messaging)
-                            topics = get_topics(message)
-                            
 
-                            mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'topics': topics}})
+                            if message is not None:
+                                message.replace('.', '').replace('?', '')
+                                topics = get_topics(message)
+                                
+                                print topics
 
-                            recipient = get_recipient(sender, topics)
+                                mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'topics': topics}})
 
-                            if recipient is not None:
-                                mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'recipient': recipient}})
-                                mongo.db.ty.users.update_one({'uid': recipient}, {'$set': {'recipient': sender}})
-                                send_to_recipient("You've been connected. Say Hi!", sender)
-                                send_to_recipient("You've been connected. Say Hi!", recipient)
-                            else:
-                                if user['type'] == 'connect':
-                                    send_to_recipient('Finding someone who can help you...', sender)
-                                elif user['type'] == 'help':
-                                    send_to_recipient('Finding someone you can help...', sender)
+                                recipient = get_recipient(sender, topics)
+
+                                if recipient is not None:
+                                    mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'recipient': recipient}})
+                                    mongo.db.ty.users.update_one({'uid': recipient}, {'$set': {'recipient': sender}})
+                                    send_to_recipient("You've been connected. Say Hi!", sender)
+                                    send_to_recipient("You've been connected. Say Hi!", recipient)
+                                else:
+                                    print user
+                                    if user['type'] == 'connect':
+                                        send_to_recipient('Finding someone with similar interests...', sender)
+                                    elif user['type'] == 'help':
+                                        send_to_recipient('Finding someone with similar interests...', sender)
+                                return '200'
+
                             return '200'
 
                     else:
 
-                        message = get_text_message_parts(messaging)
-                        
+                        message = get_text_message_parts(messaging)                        
 
 
                         if message != None:
+
+                            message = message.replace('.', '').replace('?', '')
                         
-                            if message == 'stop':
+                            if message.lower() == 'stop':
                                 mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'recipient': ''}})
                                 send_to_recipient('You disconnected from the conversation.', sender)
                                 mongo.db.ty.users.update_one({'uid': user['recipient']}, {'$set': {'recipient': ''}})
                                 send_to_recipient('You have been disconnected from the conversation.', user['recipient'])
-                            elif message == 'restart':
+                            elif message.lower() == 'restart':
                                 mongo.db.ty.users.update_one({'uid': sender}, {'$set': {'type': '', 'topics': '', 'recipient': ''}})
                                 
                                 if 'recipient' in user:
@@ -268,7 +283,10 @@ def webhook():
                                     send_to_recipient('You have been disconnected from the conversation.', user['recipient'])
                                 else:
                                     send_to_recipient('Your profile has been reset.', sender)
-                                send_welcome_message(sender)
+
+                                mongo.db.ty.users.delete_one({'uid': user['recipient']})
+                                mongo.db.ty.users.delete_one({'uid': sender})
+                                # send_welcome_message(sender)
                             elif is_url(message) != False:
                                 x, url = is_url(message)
                                 if website.is_nsfw(url):
@@ -278,6 +296,53 @@ def webhook():
                                 return '200'
                             else:
                                 if is_message_safe(message):
+
+
+
+                                    recipient = mongo.db.ty.users.find_one({'uid': user['recipient']})
+                                    
+                                    recipient_topics = recipient['topics']
+                                    user_topics = user['topics']
+
+                                    topics = []
+                                    topics.extend(recipient_topics)
+                                    topics.extend(user_topics)
+
+                                    message_topics = get_topics(message)
+
+                                    if message_topics is not None:
+                                        if 'session' in user:
+                                            message_topics.extend(user['session'])
+                                            mongo.db.ty.users.update_one({'uid': user['uid']}, {'$set': {'session': message_topics}})
+                                        else:
+                                            mongo.db.ty.users.update_one({'uid': user['uid']}, {'$set': {'session': message_topics}})
+
+
+                                    print message_topics
+
+                                    score = 0
+
+                                    for topic in topics:
+                                        topic_lemmas = wn.synsets(topic)[0]
+                                        for mtopic in message_topics:
+                                            mtopic_lemmas = wn.synsets(mtopic)[0]
+
+                                            
+                                            x = topic_lemmas.path_similarity(mtopic_lemmas)
+
+                                            if x is not None:
+                                                score += x
+
+
+
+                                    total_score = score/len(topics)
+
+                                    print total_score
+
+
+                                    if total_score > 4 and total_score < 10:
+                                        send_to_recipient('Conversation has gone out of topic.', sender)
+                                        
                                     send_to_recipient(message, user['recipient'])
                                 else:
                                     send_to_recipient('Explicit content detected. Message blocked.', sender)
